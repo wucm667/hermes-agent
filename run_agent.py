@@ -3398,6 +3398,24 @@ class AIAgent:
             if isinstance(msg, dict) and msg.get("role") == "user":
                 msg["content"] = override
 
+    def _invalidate_failed_tool_calls(self, messages: List[Dict], error_msg: str, provider: str) -> None:
+        """Remove tool_call_id from tool messages when API returns 400 error.
+
+        Prevents failed tool_call_ids from being persisted and reused across sessions.
+        Only applies to MiniMax provider with 400 errors related to tool calls.
+        """
+        if provider != "minimax-cn":
+            return
+
+        error_lower = str(error_msg).lower()
+        if not ("tool_call_id" in error_lower or "invalid function arguments" in error_lower):
+            return
+
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "tool":
+                if "tool_call_id" in msg:
+                    del msg["tool_call_id"]
+
     def _persist_session(self, messages: List[Dict], conversation_history: List[Dict] = None):
         """Save session state to both JSON log and SQLite on any exit path.
 
@@ -11700,6 +11718,8 @@ class AIAgent:
                                 force=True,
                             )
                         else:
+                            if status_code == 400:
+                                self._invalidate_failed_tool_calls(messages, str(api_error), _provider)
                             self._persist_session(messages, conversation_history)
                         return {
                             "final_response": None,
